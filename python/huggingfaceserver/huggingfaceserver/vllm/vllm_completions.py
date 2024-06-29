@@ -144,10 +144,9 @@ class OpenAIServingCompletion:
 
                 generators.append(
                     self.engine.generate(
-                        prompt,
+                        {"prompt": prompt, "prompt_token_ids": input_ids},
                         sampling_params,
                         f"{request_id}-{i}",
-                        prompt_token_ids=input_ids,
                     )
                 )
         except Exception as e:
@@ -175,7 +174,7 @@ class OpenAIServingCompletion:
             )
 
         # Non-streaming response
-        final_res_batch: RequestOutput = [None] * len(prompts)
+        final_res_batch: List[RequestOutput] = [None] * len(prompts)
         try:
             async for i, res in result_generator:
                 final_res_batch[i] = res
@@ -259,9 +258,7 @@ class OpenAIServingCompletion:
                         choices=[
                             CompletionChoice(
                                 index=i,
-                                finish_reason=(
-                                    finish_reason if finish_reason else "length"
-                                ),  # finish_reason validation expects it be one of Literal["stop", "length", "content_filter"]
+                                finish_reason=finish_reason,
                                 text=delta_text,
                                 logprobs=logprobs,
                             )
@@ -296,7 +293,9 @@ class OpenAIServingCompletion:
                     output_text = prompt_text
                 elif request.echo and request.max_tokens > 0:
                     token_ids = prompt_token_ids + output.token_ids
-                    top_logprobs = prompt_logprobs + output.logprobs
+                    top_logprobs = output.logprobs or prompt_logprobs
+                    if output.logprobs and prompt_logprobs:
+                        top_logprobs = prompt_logprobs + output.logprobs
                     output_text = prompt_text + output.text
                 else:
                     token_ids = output.token_ids
@@ -404,16 +403,16 @@ class OpenAIServingCompletion:
             step_top_logprobs = top_logprobs[i]
             if step_top_logprobs is not None:
                 token_logprob = step_top_logprobs[token_id].logprob
+                token = step_top_logprobs[token_id].decoded_token
+                logprobs.tokens.append(token)
+                last_token_len = len(token)
             else:
                 token_logprob = None
-            token = step_top_logprobs[token_id].decoded_token
-            logprobs.tokens.append(token)
             logprobs.token_logprobs.append(token_logprob)
             if len(logprobs.text_offset) == 0:
                 logprobs.text_offset.append(initial_text_offset)
             else:
                 logprobs.text_offset.append(logprobs.text_offset[-1] + last_token_len)
-            last_token_len = len(token)
 
             if num_output_top_logprobs:
                 logprobs.top_logprobs.append(
